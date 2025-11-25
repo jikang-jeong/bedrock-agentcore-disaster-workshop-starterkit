@@ -31,9 +31,9 @@ AWS Bedrock AgentCore를 활용한 화재 대응 어시스턴트 시스템 실�
 
 ---
 
-## 🎯 사전 준비 (필수)
+## 🎯 사전 준비
 
-### 1. Windy API 키 발급
+### Windy API 키 발급 (필수)
 
 화재 현장의 실시간 기상 정보(풍속, 풍향, 온도 등)를 조회하기 위해 필요합니다.
 
@@ -41,175 +41,222 @@ AWS Bedrock AgentCore를 활용한 화재 대응 어시스턴트 시스템 실�
 1. https://api.windy.com 접속
 2. 회원가입 (무료)
 3. API 키 발급 (Free tier: 하루 500 requests)
-4. `env.js` 파일의 `WINDY_API_KEY`에 입력
-
-```javascript
-// env.js
-WINDY_API_KEY: 'YOUR_WINDY_API_KEY_HERE'
-```
+4. Lab 1에서 `.env` 파일에 자동 설정됨
 
 ---
 
-### 2. AWS S3 Vectors 설정 (소방서 데이터)
+## 🚀 실습 가이드
 
-전국 소방서 위치 데이터를 벡터 임베딩하여 저장합니다.
+이 워크샵은 **7개의 Jupyter Notebook**으로 구성되어 있으며, 순차적으로 진행합니다.
 
-**사전 요구사항:**
-- AWS 계정
-- S3 Vectors 버킷 생성 권한
-- Bedrock 모델 액세스 (Titan Embeddings)
+### Lab 1: 환경 구성
+**파일:** `lab1_environment_setup.ipynb`
 
-**설정 절차:**
+**내용:**
+- Python 패키지 설치
+- AWS 환경 확인
+- `.env` 파일 생성 및 Windy API Key 설정
 
-#### 2.1 S3 Vectors 버킷 생성
-```bash
-aws s3vectors create-vector-bucket \
-  --vector-bucket-name firestation-location-xy \
-  --region us-west-2
-```
+**생성 파일:**
+- `.env` (AWS Region, Windy API Key)
 
-#### 2.2 인덱스 생성
-```bash
-aws s3vectors create-index \
-  --vector-bucket-name firestation-location-xy \
-  --index-name fire-station \
-  --vector-dimension 1024 \
-  --distance-metric COSINE \
-  --region us-west-2
-```
+---
 
-#### 2.3 소방서 데이터 임베딩
-```bash
-cd s3vector_embed
-pip install boto3 pandas
-python embed_firestation.py
-```
+### Lab 2: Memory 구성
+**파일:** `lab2_memory_setup.ipynb`
+
+**내용:**
+- Bedrock Agent Core Memory 생성
+- Short-term & Long-term Memory 이해
+- Semantic Strategy 설정
+
+**생성 리소스:**
+- Bedrock Memory (customMemory)
+- Memory ID → `.env`에 자동 저장
+
+---
+
+### Lab 3: Vector Database 구성
+**파일:** `lab3_vector_database.ipynb`
+
+**내용:**
+- S3 Vector Bucket 생성
+- Vector Index 생성
+- 소방서 데이터 임베딩 (Titan Embeddings)
+- Vector Search 테스트
+
+**생성 리소스:**
+- S3 Vector Bucket: `firestation-location-xy`
+- Vector Index: `fire-station`
+- 임베딩된 소방서 데이터 (~1,200개)
 
 **데이터 소스:**
-- `misc/소방청_전국소방서 좌표현황(XY좌표)_20240901.csv`
-- 전국 소방서 약 1,200개 위치 정보
-
-**임베딩 내용:**
-```
-소방서명, 주소, 위도, 경도, 전화번호 → Titan Embeddings (1024차원)
-```
+- `misc/fire_station.csv` (전국 소방서 좌표)
 
 ---
 
-### 3. AWS Bedrock Memory 설정
+### Lab 4: Agent 생성
+**파일:** `lab4_create_agent.ipynb`
 
-에이전트의 대화 컨텍스트를 유지하기 위한 메모리 설정입니다.
+**내용:**
+- Agent Factory 구현
+- Memory Hooks 구현 (Short-term & Long-term)
+- Memory Manager 구현
 
-**설정 절차:**
-
-#### 3.1 Memory 생성
-```bash
-cd agent/deploy/memory
-python deploy.py
-```
-
-또는 AWS Console에서:
-1. Bedrock Console → Memory 메뉴
-2. "Create Memory" 클릭
-3. Memory ID 복사
-
-#### 3.2 Memory ID 설정
-```python
-# agent/deploy/runtime/config.py
-MEMORY_ID = "customMemory-XXXXX"  # 생성된 Memory ID로 변경
-```
-
-**Memory 구조:**
-- Short-term Memory: 현재 세션의 대화 내용
-- Long-term Memory: 과거 세션의 중요 정보
+**생성 파일:**
+- `agent/deploy/runtime/agent/factory.py`
+- `agent/deploy/runtime/memory/hooks.py`
+- `agent/deploy/runtime/memory/manager.py`
 
 ---
 
-### 4. 환경 변수 설정
+### Lab 5: Tools 생성
+**파일:** `lab5_create_tools.ipynb`
 
-#### 4.1 Frontend 설정
-```javascript
-// env.js
-const ENV = {
-    USER_ID: 'your-user-id',           // 본인의 사용자 ID
-    SESSION_ID: 'your-session-id-',    // 본인의 세션 ID
-    WINDY_API_KEY: 'YOUR_WINDY_KEY',   // Windy API 키
-    AGENT_API_URL: 'http://localhost:8082/analyze',
-};
-```
+**내용:**
+- Disaster Tools 구현
+  - `wikipedia`: 위키피디아 검색
+  - `find_fire_station`: 소방서 벡터 검색
+  - `get_weather_info`: Windy API 기상 정보
+- Browser Tool 구현 (Playwright)
+- Agent Factory에 Tools 등록
 
-#### 4.2 Backend 설정
-```python
-# agent/deploy/runtime/config.py
-MODEL_ID = "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
-REGION = "us-west-2"
-MEMORY_ID = "customMemory-XXXXX"  # 본인의 Memory ID
-WINDY_API_KEY = "YOUR_WINDY_KEY"  # Windy API 키
-```
-
-#### 4.3 Flask 서버 설정
-```python
-# agent/main.py
-# agentRuntimeArn 수정 (본인의 ARN으로 변경)
-agentRuntimeArn='arn:aws:bedrock-agentcore:us-west-2:YOUR_ACCOUNT:runtime/agent_runtime-XXXXX'
-```
+**생성 파일:**
+- `agent/deploy/runtime/config.py`
+- `agent/deploy/runtime/tool_use/disaster_tools.py`
+- `agent/deploy/runtime/tool_use/browser_tool/playwright.py`
 
 ---
 
-## 🚀 빠른 시작
+### Lab 6: Agent Runtime 배포
+**파일:** `lab6_agent_runtime.ipynb`
 
-### 1. 의존성 설치
+**내용:**
+- `bedrock_agent_core.py` 생성 (Entrypoint)
+- `requirements.txt` 생성
+- Docker 이미지 빌드 및 ECR 배포
+- S3 Vectors 권한 추가
 
-#### Frontend
+**생성 리소스:**
+- Bedrock Agent Core Runtime
+- ECR Repository
+- Docker Image
+- Execution Role (S3 Vectors 권한 포함)
+- Agent ARN → `.env`에 자동 저장
+
+**소요 시간:** 5-10분 (Docker 빌드)
+
+---
+
+### Lab 7: 웹 애플리케이션 연동
+**파일:** `lab7_web_application.ipynb`
+
+**내용:**
+- Flask API 서버 생성 (`agent/main.py`)
+- `env.js` 파일 자동 생성 (Frontend 설정)
+- HTTP 서버 스크립트 생성
+- 전체 시스템 테스트
+
+**생성 파일:**
+- `agent/main.py` (Flask 서버)
+- `env.js` (Frontend 환경 변수)
+- `start_server.sh` (Flask 실행 스크립트)
+- `start_http_server.sh` (HTTP 서버 실행 스크립트)
+
+**실행 방법:**
 ```bash
-# 별도 설치 불필요 (CDN 사용)
+# 터미널 1: Flask 서버
+./start_server.sh
+
+# 터미널 2: HTTP 서버
+./start_http_server.sh
 ```
 
-#### Backend
-```bash
-cd agent
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-pip install -r requirements.txt
+**접근 주소:**
+- 로컬: http://localhost:8000
+- SageMaker Studio: `https://{studio-domain}/jupyter/default/proxy/8000/`
+
+---
+
+## 📝 중요 사항
+
+### 1. 환경 변수 관리
+- **모든 설정은 `.env` 파일에 자동 저장됩니다**
+- `env.js`는 Lab 7에서 자동 생성되므로 **수동 설정 불필요**
+- Windy API Key만 Lab 1에서 입력하면 됩니다
+
+### 2. 파일 생성
+- `agent/` 디렉토리의 모든 파일은 **노트북 실행으로 자동 생성**됩니다
+- 수동으로 파일을 생성하거나 수정할 필요가 없습니다
+
+### 3. 순차 실행
+- Lab 1 → Lab 2 → ... → Lab 7 순서대로 진행해야 합니다
+- 각 Lab은 이전 Lab의 결과물에 의존합니다
+
+### 4. SageMaker Studio 사용 시
+- Lab 7에서 Studio 도메인 입력 필요
+- `env.js`에 프록시 URL이 자동 설정됩니다
+
+---
+
+## 🧪 테스트 쿼리
+
+워크샵 완료 후 다음 쿼리로 시스템을 테스트하세요:
+
+```
+서울특별시 서초구 방배중앙로 06681에서 화재가 발생했습니다. 
+가까운 소방서를 찾아주세요.
 ```
 
-### 2. 서버 실행
+**예상 결과:**
+- ✅ 가까운 소방서 5곳 표시
+- ✅ 지도에 마커 표시
+- ✅ 기상 정보 (풍속, 풍향, 온도)
+- ✅ 관련 뉴스 (Browser Tool)
+
+---
+
+## 🚀 빠른 시작 (워크샵 완료 후)
+
+워크샵을 완료한 후 시스템을 재실행하는 방법:
+
+### 1. 서버 실행
 
 #### Backend (Flask)
 ```bash
-cd agent
-python main.py
-# 서버 실행: http://localhost:8082
+./start_server.sh
+# 또는
+cd agent && python main.py
 ```
 
 #### Frontend (HTTP Server)
-프로젝트 루트 디렉토리에서 Python 내장 HTTP 서버를 실행합니다:
-
 ```bash
-# 프로젝트 루트로 이동
-cd disaster
-
-# Python 3 HTTP 서버 실행
+./start_http_server.sh
+# 또는
 python3 -m http.server 8000
-
-# 또는 Python 2
-python -m SimpleHTTPServer 8000
 ```
 
-**실행 확인:**
-- 터미널에 `Serving HTTP on 0.0.0.0 port 8000 ...` 메시지 표시
-- 브라우저에서 http://localhost:8000 접속
+### 2. 접근
+
+**로컬 환경:**
+- Frontend: http://localhost:8000
+- Backend: http://localhost:8082
+
+**SageMaker Studio:**
+- Frontend: `https://{studio-domain}/jupyter/default/proxy/8000/`
+- Backend: `https://{studio-domain}/jupyter/default/proxy/8082/`
 
 ### 3. 사용 방법
 
-1. 브라우저에서 `http://localhost:8000` 접속
+1. 브라우저에서 Frontend 접속
 2. 지도에서 화재 발생 지점 클릭 (마커 생성)
 3. 🤖 "AI 에이전트 분석" 버튼 클릭
 4. 우측 패널에서 실시간 분석 결과 확인
 
+
 ---
 
-## 🛠️ 개발 가이드
+## 🛠️ 개발 가이드 (고급)
 
 ### Frontend 커스터마이징
 
@@ -266,7 +313,7 @@ def my_custom_tool(param: str) -> str:
 from tool_use.disaster_tools import my_custom_tool
 
 agent = Agent(
-    tools=[browser_tool_agent, wikipedia, find_fire_station, get_weather_info, my_custom_tool],
+    tools=[browser_tool, wikipedia, find_fire_station, get_weather_info, my_custom_tool],
     # ...
 )
 ```
@@ -278,7 +325,7 @@ agent = Agent(
 에이전트의 행동을 변경하려면 시스템 프롬프트를 수정합니다.
 
 ```python
-# agent/deploy/runtime/config.py
+# agent/deploy/runtime/agent/factory.py
 AGENT_SYSTEM_PROMPT = """당신은 소방서 화재 대응 지휘를 지원하는 전문 AI 어시스턴트입니다.
 
 **대상 사용자:** 소방서 지휘관 및 대응팀
@@ -358,31 +405,105 @@ data: <event type="windy">37.5,127.0,15.2,3.5,270,65,1013,서울특별시 강남
 ## 📁 프로젝트 구조
 
 ```
-disaster/
-├── index.html              # UI 레이아웃
-├── app.js                  # 핵심 로직 (지도, 에이전트 연동)
-├── map-config.js           # 지도 설정
-├── env.js                  # 환경 변수 (API 키)
-├── README.md               # 이 문서
-├── agent/                  # 백엔드
-│   ├── main.py            # Flask 서버
-│   ├── requirements.txt   # Python 의존성
+disaster_starter_kit/
+├── lab1_environment_setup.ipynb      # Lab 1: 환경 구성
+├── lab2_memory_setup.ipynb           # Lab 2: Memory 구성
+├── lab3_vector_database.ipynb        # Lab 3: Vector Database
+├── lab4_create_agent.ipynb           # Lab 4: Agent 생성
+├── lab5_create_tools.ipynb           # Lab 5: Tools 생성
+├── lab6_agent_runtime.ipynb          # Lab 6: Runtime 배포
+├── lab7_web_application.ipynb        # Lab 7: 웹 애플리케이션
+├── .env                               # 환경 변수 (자동 생성)
+├── index.html                         # UI 레이아웃
+├── app.js                             # 핵심 로직
+├── map-config.js                      # 지도 설정
+├── env.js                             # Frontend 환경 변수 (자동 생성)
+├── README.md                          # 이 문서
+├── agent/                             # 백엔드 (자동 생성)
+│   ├── main.py                       # Flask 서버
 │   └── deploy/
-│       ├── runtime/       # Bedrock AgentCore 런타임
-│       │   ├── bedrock_agent_core.py
-│       │   ├── config.py  # 에이전트 설정
-│       │   ├── agent/factory.py
-│       │   ├── memory/    # 메모리 관리
-│       │   └── tool_use/  # 도구 모음
-│       │       ├── disaster_tools.py
-│       │       └── browser_tool/
-│       └── memory/
-│           └── deploy.py  # Memory 생성 스크립트
-├── s3vector_embed/
-│   └── embed_firestation.py  # 소방서 데이터 임베딩
+│       └── runtime/                  # Bedrock AgentCore 런타임
+│           ├── bedrock_agent_core.py
+│           ├── config.py
+│           ├── requirements.txt
+│           ├── agent/
+│           │   └── factory.py
+│           ├── memory/
+│           │   ├── manager.py
+│           │   └── hooks.py
+│           └── tool_use/
+│               ├── disaster_tools.py
+│               └── browser_tool/
+│                   └── playwright.py
 └── misc/
-    └── 소방청_전국소방서 좌표현황(XY좌표)_20240901.csv
+    └── fire_station.csv              # 소방서 데이터
 ```
 
 ---
+
+## 🔧 트러블슈팅
+
+### 1. S3 Vectors 권한 오류
+```
+AccessDeniedException: User is not authorized to perform: s3vectors:QueryVectors
+```
+
+**해결 방법:**
+- Lab 6에서 자동으로 권한이 추가됩니다
+- 수동 추가: `lab4_s3vectors_permission.py` 실행
+
+### 2. Memory ID 오류
+```
+ResourceNotFoundException: Memory not found
+```
+
+**해결 방법:**
+- Lab 2를 다시 실행하여 Memory 생성
+- `.env` 파일에 `MEMORY_ID`가 올바르게 설정되었는지 확인
+
+### 3. Flask 서버 연결 오류
+```
+Failed to fetch: http://localhost:8082/analyze
+```
+
+**해결 방법:**
+- Flask 서버가 실행 중인지 확인: `./start_server.sh`
+- SageMaker Studio: `env.js`의 프록시 URL 확인
+
+### 4. Playwright 브라우저 오류
+```
+Executable doesn't exist at /path/to/chromium
+```
+
+**해결 방법:**
+```bash
+playwright install chromium
+```
+
+---
+
+## 📚 참고 자료
+
+- [AWS Bedrock Agent Core 문서](https://docs.aws.amazon.com/bedrock/latest/userguide/agents.html)
+- [S3 Vectors 문서](https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-vectors.html)
+- [Windy API 문서](https://api.windy.com/api/docs)
+- [Strands Framework](https://github.com/aws-samples/strands)
+
+---
+
+## 📄 라이선스
+
+이 프로젝트는 MIT 라이선스를 따릅니다.
+
+---
+
+## 🤝 기여
+
+이슈 및 풀 리퀘스트를 환영합니다!
+
+---
+
+## 📧 문의
+
+질문이나 피드백은 이슈를 통해 남겨주세요.
  
