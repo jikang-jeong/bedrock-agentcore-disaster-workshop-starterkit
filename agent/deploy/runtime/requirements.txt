@@ -1,0 +1,12 @@
+strands-agents>=0.5.0
+strands-agents-tools>=0.1.0
+boto3>=1.34.0
+mcp>=0.1.0
+python-dateutil>=2.8.2
+python-dotenv>=1.0.0
+httpx>=0.24.0
+bedrock-agentcore-starter-toolkit
+bedrock-agentcore
+wikipedia
+playwright>=1.40.0
+nest-asyncio
