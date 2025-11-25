@@ -6,11 +6,11 @@
 
 const ENV = {
     // User Session
-    USER_ID: 'user-jikjeong',  // 🔧 변경: 본인의 사용자 ID
-    SESSION_ID: 'session-user-jikjeong-',  // 🔧 변경: 본인의 세션 ID
+    USER_ID: '',  // 🔧 변경: 본인의 사용자 ID
+    SESSION_ID: '',  // 🔧 변경: 본인의 세션 ID
     
     // Windy API (기상 정보)
-    WINDY_API_KEY: 'LGGZxzCfLmYl9zTTUtvNxEgIWOSggRXA',  // 🔧 변경: https://api.windy.com 에서 발급
+    WINDY_API_KEY: '',  // 🔧 변경: https://api.windy.com 에서 발급
     WINDY_API_URL: 'https://api.windy.com/api/point-forecast/v2',
     
     // Agent API (백엔드 서버)
