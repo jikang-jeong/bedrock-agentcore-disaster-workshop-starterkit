@@ -11,7 +11,7 @@ s3vectors = boto3.client("s3vectors", region_name="us-west-2")
 
 # CSV 파일 경로
 script_dir = os.path.dirname(os.path.abspath(__file__))
-csv_path = os.path.join(script_dir, '..', 'misc', '소방청_전국소방서 좌표현황(XY좌표)_20240901.csv')
+csv_path = os.path.join(script_dir, '..', 'misc', 'firestation.csv')
 
 # CSV 읽기
 df = pd.read_csv(csv_path, encoding='euc-kr')
