@@ -172,8 +172,7 @@ AWS Bedrock AgentCore를 활용한 화재 대응 어시스턴트 시스템 실�
 ./start_http_server.sh
 ```
 
-**접근 주소:**
-- 로컬: http://localhost:8000
+**접근 주소:** 
 - SageMaker Studio: `https://{studio-domain}/jupyter/default/proxy/8000/`
 
 ---
@@ -224,24 +223,16 @@ AWS Bedrock AgentCore를 활용한 화재 대응 어시스턴트 시스템 실�
 
 #### Backend (Flask)
 ```bash
-./start_server.sh
-# 또는
-cd agent && python main.py
+./start_server.sh 
 ```
 
 #### Frontend (HTTP Server)
 ```bash
-./start_http_server.sh
-# 또는
-python3 -m http.server 8000
+./start_http_server.sh 
 ```
 
 ### 2. 접근
-
-**로컬 환경:**
-- Frontend: http://localhost:8000
-- Backend: http://localhost:8082
-
+ 
 **SageMaker Studio:**
 - Frontend: `https://{studio-domain}/jupyter/default/proxy/8000/`
 - Backend: `https://{studio-domain}/jupyter/default/proxy/8082/`
@@ -252,40 +243,7 @@ python3 -m http.server 8000
 2. 지도에서 화재 발생 지점 클릭 (마커 생성)
 3. 🤖 "AI 에이전트 분석" 버튼 클릭
 4. 우측 패널에서 실시간 분석 결과 확인
-
-
----
-
-## 🛠️ 개발 가이드 (고급)
-
-### Frontend 커스터마이징
-
-#### 지도 설정 변경
-```javascript
-// map-config.js
-const MAP_CONFIG = {
-    mapCenter: [37.5, 127.5],  // 지도 중심 좌표
-    mapZoom: 11,               // 초기 줌 레벨
-    timeInterval: 30,          // 시간 간격 (분)
-    layers: {
-        standard: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-        humanitarian: 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png',
-    }
-};
-```
-
-#### 화재 마커 아이콘 변경
-```javascript
-// app.js
-const fireIcon = L.icon({
-    iconUrl: 'data:image/svg+xml;base64,...',  // SVG 아이콘
-    iconSize: [32, 32],
-    iconAnchor: [16, 32]
-});
-```
-
----
-
+ 
 ### Backend 도구 추가
 
 새로운 도구를 에이전트에 추가하는 방법입니다.
@@ -342,32 +300,7 @@ AGENT_SYSTEM_PROMPT = """당신은 소방서 화재 대응 지휘를 지원하�
 ...
 """
 ```
-
----
-
-## 📖 API 문서
-
-### Agent API
-
-**Endpoint:** `POST /analyze`
-
-**Request:**
-```json
-{
-  "prompt": "화재 발생 지점: 서울특별시 강남구\n위도: 37.5, 경도: 127.0\n\n화재가 발생했다!!!!!",
-  "actor_id": "user-jikjeong",
-  "session_id": "session-user-jikjeong-"
-}
-```
-
-**Response:** (Server-Sent Events)
-```
-data: ### 🔥 화재 현장 분석\n\n**위치:** 서울특별시 강남구...
-data: <event type="geocode">37.5123,127.0456,강남소방서</event>
-data: <event type="windy">37.5,127.0,15.2,3.5,270,65,1013,서울특별시 강남구</event>
-```
-
----
+ 
 
 ### Event 태그 시스템
 
@@ -400,110 +333,5 @@ data: <event type="windy">37.5,127.0,15.2,3.5,270,65,1013,서울특별시 강남
 <event type="address">서울특별시 강남구 테헤란로 123</event>
 ```
 
----
-
-## 📁 프로젝트 구조
-
-```
-disaster_starter_kit/
-├── lab1_environment_setup.ipynb      # Lab 1: 환경 구성
-├── lab2_memory_setup.ipynb           # Lab 2: Memory 구성
-├── lab3_vector_database.ipynb        # Lab 3: Vector Database
-├── lab4_create_agent.ipynb           # Lab 4: Agent 생성
-├── lab5_create_tools.ipynb           # Lab 5: Tools 생성
-├── lab6_agent_runtime.ipynb          # Lab 6: Runtime 배포
-├── lab7_web_application.ipynb        # Lab 7: 웹 애플리케이션
-├── .env                               # 환경 변수 (자동 생성)
-├── index.html                         # UI 레이아웃
-├── app.js                             # 핵심 로직
-├── map-config.js                      # 지도 설정
-├── env.js                             # Frontend 환경 변수 (자동 생성)
-├── README.md                          # 이 문서
-├── agent/                             # 백엔드 (자동 생성)
-│   ├── main.py                       # Flask 서버
-│   └── deploy/
-│       └── runtime/                  # Bedrock AgentCore 런타임
-│           ├── bedrock_agent_core.py
-│           ├── config.py
-│           ├── requirements.txt
-│           ├── agent/
-│           │   └── factory.py
-│           ├── memory/
-│           │   ├── manager.py
-│           │   └── hooks.py
-│           └── tool_use/
-│               ├── disaster_tools.py
-│               └── browser_tool/
-│                   └── playwright.py
-└── misc/
-    └── fire_station.csv              # 소방서 데이터
-```
-
----
-
-## 🔧 트러블슈팅
-
-### 1. S3 Vectors 권한 오류
-```
-AccessDeniedException: User is not authorized to perform: s3vectors:QueryVectors
-```
-
-**해결 방법:**
-- Lab 6에서 자동으로 권한이 추가됩니다
-- 수동 추가: `lab4_s3vectors_permission.py` 실행
-
-### 2. Memory ID 오류
-```
-ResourceNotFoundException: Memory not found
-```
-
-**해결 방법:**
-- Lab 2를 다시 실행하여 Memory 생성
-- `.env` 파일에 `MEMORY_ID`가 올바르게 설정되었는지 확인
-
-### 3. Flask 서버 연결 오류
-```
-Failed to fetch: http://localhost:8082/analyze
-```
-
-**해결 방법:**
-- Flask 서버가 실행 중인지 확인: `./start_server.sh`
-- SageMaker Studio: `env.js`의 프록시 URL 확인
-
-### 4. Playwright 브라우저 오류
-```
-Executable doesn't exist at /path/to/chromium
-```
-
-**해결 방법:**
-```bash
-playwright install chromium
-```
-
----
-
-## 📚 참고 자료
-
-- [AWS Bedrock Agent Core 문서](https://docs.aws.amazon.com/bedrock/latest/userguide/agents.html)
-- [S3 Vectors 문서](https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-vectors.html)
-- [Windy API 문서](https://api.windy.com/api/docs)
-- [Strands Framework](https://github.com/aws-samples/strands)
-
----
-
-## 📄 라이선스
-
-이 프로젝트는 MIT 라이선스를 따릅니다.
-
----
-
-## 🤝 기여
-
-이슈 및 풀 리퀘스트를 환영합니다!
-
----
-
-## 📧 문의
-
-질문이나 피드백은 이슈를 통해 남겨주세요.
+--- 
  
