@@ -19,13 +19,30 @@ let dragOffsetY = 0;
 // 이벤트 마커 관리
 const eventMarkers = {
     address: [],
+    cctv: [],
+    windy: [],
     example1: [],
     example2: []
 };
 
+// CCTV 데이터 저장
+let cctvData = [];
+
+// 연결선 관리
+let connectionLines = [];
+
+// 마커 그룹 (bounds 계산용)
+let pendingMarkers = [];
+let markerTimeout = null;
+
 const eventMarkerIcons = {
     address: L.icon({
-        iconUrl: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMiIgaGVpZ2h0PSIzMiI+PGNpcmNsZSBjeD0iMTYiIGN5PSIxNiIgcj0iMTIiIGZpbGw9IiMwMDdmZmYiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIyIi8+PHRleHQgeD0iMTYiIHk9IjIxIiBmb250LXNpemU9IjE2IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmaWxsPSIjZmZmIj7wn5qSPC90ZXh0Pjwvc3ZnPg==',
+        iconUrl: 'data:image/svg+xml;base64,' + btoa('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect x="6" y="12" width="20" height="16" fill="#d32f2f" rx="2"/><polygon points="16,4 4,14 28,14" fill="#b71c1c"/><rect x="13" y="18" width="6" height="10" fill="#fff"/><rect x="8" y="14" width="4" height="4" fill="#ffeb3b"/><rect x="20" y="14" width="4" height="4" fill="#ffeb3b"/><circle cx="16" cy="9" r="2" fill="#fff"/></svg>'),
+        iconSize: [32, 32],
+        iconAnchor: [16, 28]
+    }),
+    cctv: L.icon({
+        iconUrl: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMiIgaGVpZ2h0PSIzMiI+PGNpcmNsZSBjeD0iMTYiIGN5PSIxNiIgcj0iMTIiIGZpbGw9IiM5YzI3YjAiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIyIi8+PHRleHQgeD0iMTYiIHk9IjIxIiBmb250LXNpemU9IjE0IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmaWxsPSIjZmZmIj7wn5O5PC90ZXh0Pjwvc3ZnPg==',
         iconSize: [32, 32],
         iconAnchor: [16, 16]
     }),
@@ -52,6 +69,7 @@ class EventParser {
             'geocode': this.handleGeocode.bind(this),
             'address': this.handleAddress.bind(this),
             'windy': this.handleWindy.bind(this),
+            'cctv': this.handleCctv.bind(this),
             'example1': this.handleExample1.bind(this),
             'example2': this.handleExample2.bind(this)
         };
@@ -103,7 +121,17 @@ class EventParser {
                 const label = parts.length > 2 ? parts.slice(2).join(',').trim() : '소방서';
                 
                 console.log('✅ Parsed coordinates:', { lat, lon, label });
-                addEventMarker('address', lat, lon, label);
+                addEventMarker('address', lat, lon, label, false);
+                
+                // 화재 마커와 연결선 그리기 (파란색)
+                drawConnectionLine(lat, lon, '#007fff');
+                
+                // pending에 추가하여 bounds 계산 (화재 지점 + 새 마커)
+                if (currentFireLocation && pendingMarkers.length === 0) {
+                    pendingMarkers.push([currentFireLocation.lat, currentFireLocation.lon]);
+                }
+                pendingMarkers.push([lat, lon]);
+                scheduleFitBounds();
             } else {
                 console.error('❌ Invalid geocode format:', data);
             }
@@ -120,7 +148,14 @@ class EventParser {
         
         if (coords) {
             console.log('✅ Adding marker at:', coords.lat, coords.lon);
-            addEventMarker('address', coords.lat, coords.lon, address);
+            addEventMarker('address', coords.lat, coords.lon, address, false);
+            
+            // 화재 마커와 연결선 그리기 (파란색)
+            drawConnectionLine(coords.lat, coords.lon, '#007fff');
+            
+            // pending에 추가하여 bounds 계산
+            pendingMarkers.push([coords.lat, coords.lon]);
+            scheduleFitBounds();
         } else {
             console.error('❌ Geocoding failed for:', address);
         }
@@ -155,6 +190,51 @@ class EventParser {
             }
         } catch (error) {
             console.error('❌ Windy parsing error:', error);
+        }
+    }
+    
+    handleCctv(data) {
+        console.log('📹 CCTV event received:', data);
+        
+        try {
+            // 형식: "위도,경도,주소,m3u8스트리밍URL"
+            const parts = data.split(',');
+            if (parts.length >= 4) {
+                const lat = parseFloat(parts[0].trim());
+                const lon = parseFloat(parts[1].trim());
+                const address = parts[2].trim();
+                const streamUrl = parts.slice(3).join(',').trim(); // URL에 쉼표가 있을 수 있음
+                
+                console.log('✅ Parsed CCTV data:', { lat, lon, address, streamUrl });
+                
+                // 첫 번째 CCTV면 자동 재생
+                const isFirst = cctvData.length === 0;
+                
+                // CCTV 데이터 저장
+                cctvData.push({ lat, lon, address, streamUrl });
+                
+                // CCTV 마커 추가 (flyTo 없이)
+                addCctvMarker(lat, lon, address, streamUrl, false);
+                
+                // 화재 마커와 연결선 그리기 (보라색)
+                drawConnectionLine(lat, lon, '#9c27b0');
+                
+                // 첫 번째 CCTV 자동 재생
+                if (isFirst) {
+                    setTimeout(() => showCctvPlayer(streamUrl, address), 1200);
+                }
+                
+                // pending에 추가하여 bounds 계산 (화재 지점 + 새 마커)
+                if (currentFireLocation && pendingMarkers.length === 0) {
+                    pendingMarkers.push([currentFireLocation.lat, currentFireLocation.lon]);
+                }
+                pendingMarkers.push([lat, lon]);
+                scheduleFitBounds();
+            } else {
+                console.error('❌ Invalid CCTV format:', data);
+            }
+        } catch (error) {
+            console.error('❌ CCTV parsing error:', error);
         }
     }
     
@@ -203,6 +283,53 @@ class EventParser {
 // ============================================
 // Geocoding (주소 → 좌표)
 // ============================================
+
+// 마커 일괄 bounds 계산 (여러 마커가 연속으로 추가될 때 한번에 처리)
+function scheduleFitBounds() {
+    if (markerTimeout) {
+        clearTimeout(markerTimeout);
+    }
+    markerTimeout = setTimeout(() => {
+        if (pendingMarkers.length === 1) {
+            // 마커가 1개면 정확히 중앙에 위치
+            map.flyTo(pendingMarkers[0], 14, { duration: 1.5 });
+        } else if (pendingMarkers.length > 1) {
+            // 여러 마커면 모두 보이도록 bounds 계산
+            const bounds = L.latLngBounds(pendingMarkers);
+            map.flyToBounds(bounds, { padding: [50, 50], duration: 1.5, maxZoom: 14 });
+        }
+        pendingMarkers = [];
+        markerTimeout = null;
+    }, 500); // 500ms 동안 추가 마커 대기
+}
+
+// 화재 마커와 연결선 그리기
+function drawConnectionLine(targetLat, targetLon, color = '#007fff') {
+    if (!currentFireLocation) return;
+    
+    const line = L.polyline(
+        [[currentFireLocation.lat, currentFireLocation.lon], [targetLat, targetLon]],
+        { color: color, weight: 4, opacity: 0.8 }
+    ).addTo(map);
+    
+    connectionLines.push(line);
+}
+
+// 연결선 모두 제거
+function clearConnectionLines() {
+    connectionLines.forEach(line => map.removeLayer(line));
+    connectionLines = [];
+}
+
+// 이벤트 마커 모두 제거
+function clearEventMarkers() {
+    Object.keys(eventMarkers).forEach(type => {
+        eventMarkers[type].forEach(marker => map.removeLayer(marker));
+        eventMarkers[type] = [];
+    });
+    cctvData = [];
+}
+
 async function geocodeAddress(address) {
     console.log('🔍 Geocoding request for:', address);
     
@@ -236,9 +363,174 @@ async function geocodeAddress(address) {
 }
 
 // ============================================
+// CCTV 마커 추가
+// ============================================
+function addCctvMarker(lat, lon, address, streamUrl, shouldFlyTo = true) {
+    const marker = L.marker([lat, lon], { icon: eventMarkerIcons.cctv })
+        .addTo(map)
+        .bindPopup(`<strong>📹 ${address}</strong><br><a href="#" onclick="showCctvPlayer('${streamUrl}', '${address}'); return false;">영상 보기</a>`);
+    
+    // 마커 호버 이벤트
+    marker.on('mouseover', function() {
+        const icon = this.getElement();
+        if (icon) {
+            icon.style.width = '48px';
+            icon.style.height = '48px';
+            icon.style.marginLeft = '-24px';
+            icon.style.marginTop = '-24px';
+        }
+    });
+    
+    marker.on('mouseout', function() {
+        const icon = this.getElement();
+        if (icon) {
+            icon.style.width = '32px';
+            icon.style.height = '32px';
+            icon.style.marginLeft = '-16px';
+            icon.style.marginTop = '-16px';
+        }
+    });
+    
+    // 마커 클릭 시 CCTV 플레이어 표시
+    marker.on('click', function() {
+        showCctvPlayer(streamUrl, address);
+    });
+    
+    // 애니메이션
+    const markerElement = marker.getElement();
+    if (markerElement) {
+        markerElement.style.transform = 'scale(20) translateY(-200px)';
+        markerElement.style.opacity = '0';
+        markerElement.style.transition = 'transform 1s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.5s ease-out';
+        
+        setTimeout(() => {
+            markerElement.style.transform = 'scale(1) translateY(0)';
+            markerElement.style.opacity = '1';
+        }, 50);
+        
+        setTimeout(() => {
+            markerElement.style.transition = 'all 0.2s ease-in-out';
+        }, 1100);
+    }
+    
+    eventMarkers.cctv.push(marker);
+    
+    // 지도 이동 (옵션)
+    if (shouldFlyTo) {
+        map.flyTo([lat, lon], 14, { duration: 1.5, easeLinearity: 0.25 });
+    }
+}
+
+// ============================================
+// CCTV 플레이어 표시
+// ============================================
+function showCctvPlayer(streamUrl, address) {
+    let cctvPanel = document.getElementById('cctvPanel');
+    
+    if (!cctvPanel) {
+        // 패널이 없으면 생성
+        cctvPanel = document.createElement('div');
+        cctvPanel.id = 'cctvPanel';
+        cctvPanel.className = 'cctv-panel';
+        cctvPanel.innerHTML = `
+            <div class="cctv-header" id="cctvPanelHeader">
+                <h3>📹 CCTV 영상</h3>
+                <button class="panel-close" onclick="closeCctvPanel()">✕</button>
+            </div>
+            <div class="cctv-address" id="cctvAddress"></div>
+            <div class="cctv-content">
+                <video id="cctvVideo" controls autoplay muted style="width: 100%; height: 100%; background: #000;"></video>
+            </div>
+        `;
+        document.body.appendChild(cctvPanel);
+        
+        // 드래그 기능 추가
+        initCctvPanelDrag();
+        
+        // HLS.js 로드 (동적)
+        if (!window.Hls) {
+            const script = document.createElement('script');
+            script.src = 'https://cdn.jsdelivr.net/npm/hls.js@latest';
+            script.onload = () => playCctvStream(streamUrl);
+            document.head.appendChild(script);
+        }
+    }
+    
+    // 주소 업데이트
+    document.getElementById('cctvAddress').textContent = address;
+    
+    // 패널 표시
+    cctvPanel.classList.add('active');
+    
+    // 스트림 재생
+    if (window.Hls) {
+        playCctvStream(streamUrl);
+    }
+}
+
+function initCctvPanelDrag() {
+    const panel = document.getElementById('cctvPanel');
+    const header = document.getElementById('cctvPanelHeader');
+    let isDragging = false;
+    let offsetX = 0, offsetY = 0;
+    
+    header.addEventListener('mousedown', (e) => {
+        if (e.target.classList.contains('panel-close')) return;
+        isDragging = true;
+        offsetX = e.clientX - panel.offsetLeft;
+        offsetY = e.clientY - panel.offsetTop;
+        header.style.cursor = 'grabbing';
+    });
+    
+    document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        panel.style.left = (e.clientX - offsetX) + 'px';
+        panel.style.top = (e.clientY - offsetY) + 'px';
+        panel.style.right = 'auto';
+    });
+    
+    document.addEventListener('mouseup', () => {
+        if (isDragging) {
+            isDragging = false;
+            header.style.cursor = 'move';
+        }
+    });
+}
+
+function playCctvStream(streamUrl) {
+    const video = document.getElementById('cctvVideo');
+    
+    if (Hls.isSupported()) {
+        if (window.cctvHls) {
+            window.cctvHls.destroy();
+        }
+        window.cctvHls = new Hls();
+        window.cctvHls.loadSource(streamUrl);
+        window.cctvHls.attachMedia(video);
+        window.cctvHls.on(Hls.Events.MANIFEST_PARSED, () => {
+            video.play();
+        });
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = streamUrl;
+        video.play();
+    }
+}
+
+function closeCctvPanel() {
+    const cctvPanel = document.getElementById('cctvPanel');
+    if (cctvPanel) {
+        cctvPanel.classList.remove('active');
+        if (window.cctvHls) {
+            window.cctvHls.destroy();
+            window.cctvHls = null;
+        }
+    }
+}
+
+// ============================================
 // 이벤트 마커 추가
 // ============================================
-function addEventMarker(type, lat, lon, label) {
+function addEventMarker(type, lat, lon, label, shouldFlyTo = true) {
     const marker = L.marker([lat, lon], { icon: eventMarkerIcons[type] })
         .addTo(map)
         .bindPopup(`<strong>${label}</strong>`);
@@ -302,11 +594,10 @@ function addEventMarker(type, lat, lon, label) {
     
     eventMarkers[type].push(marker);
     
-    // 지도 이동 (부드럽게)
-    map.flyTo([lat, lon], 14, {
-        duration: 1.5,
-        easeLinearity: 0.25
-    });
+    // 지도 이동 (옵션)
+    if (shouldFlyTo) {
+        map.flyTo([lat, lon], 14, { duration: 1.5, easeLinearity: 0.25 });
+    }
 }
 
 // ============================================
@@ -316,19 +607,25 @@ async function showWeatherPanel(lat, lon, address, temp, windSpeed, windDir, hum
     const weatherPanel = document.getElementById('weatherPanel');
     const weatherContent = document.getElementById('weatherContent');
     
-    weatherPanel.classList.add('active');
-    
     // 지도 중심 이동
     map.setView([lat, lon], 15, { animate: true });
     
-    // 마커의 화면 좌표 계산
+    weatherPanel.classList.add('active');
+    
+    // 바운스 애니메이션 적용
+    weatherPanel.style.animation = 'panelBounce 0.8s ease-out';
+    setTimeout(() => {
+        weatherPanel.style.animation = '';
+    }, 800);
+    
+    // 마커의 화면 좌표 계산 (지도 이동 후) - 오른쪽에 배치
     setTimeout(() => {
         const markerPoint = map.latLngToContainerPoint([lat, lon]);
-        weatherPanel.style.left = (markerPoint.x - 120) + 'px';
-        weatherPanel.style.top = (markerPoint.y - 250) + 'px';
+        weatherPanel.style.left = (markerPoint.x + 30) + 'px';  // 마커 오른쪽
+        weatherPanel.style.top = (markerPoint.y - 100) + 'px';
         weatherPanel.style.right = 'auto';
         weatherPanel.style.bottom = 'auto';
-    }, 100);
+    }, 300);
     
     // 패널 내용 업데이트
     weatherContent.innerHTML = `
@@ -499,6 +796,30 @@ function init() {
     initMap();
     initWeatherPanelDrag();
     initInfoPanelDrag();
+    
+    // 에이전트 분석 패널 항상 활성화
+    document.getElementById('infoPanel').classList.add('active');
+    document.getElementById('infoContent').innerHTML = '<p style="color:#666;">화재 마커를 클릭하여 분석을 시작하세요.</p>';
+}
+
+// 마커 옆 AI 에이전트 버튼
+function showMarkerPopupButton(lat, lon) {
+    hideMarkerPopupButton();
+    const point = map.latLngToContainerPoint([lat, lon]);
+    const btn = document.createElement('button');
+    btn.id = 'markerPopupBtn';
+    btn.innerHTML = '🤖 AI 어시스턴트 호출';
+    btn.style.cssText = `position:absolute;left:${point.x + 20}px;top:${point.y - 15}px;z-index:1000;padding:8px 16px;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;border:none;border-radius:8px;cursor:pointer;font-weight:600;box-shadow:0 2px 10px rgba(0,0,0,0.3);`;
+    btn.onclick = () => {
+        hideMarkerPopupButton();
+        callAgent(currentFireLocation.lat, currentFireLocation.lon, currentFireLocation.address);
+    };
+    document.getElementById('map').appendChild(btn);
+}
+
+function hideMarkerPopupButton() {
+    const btn = document.getElementById('markerPopupBtn');
+    if (btn) btn.remove();
 }
 
 function initMap() {
@@ -558,7 +879,7 @@ function generateRandomFireMarkers(fireIcon) {
     fireMarkers = [];
     clickedMarkers.clear();
     lastClickedMarker = null;
-    
+
     // 대한민국 주요 도시 좌표 (전국 고르게 분포, 총 50개)
     const cities = [
         { name: '서울', lat: 37.5665, lon: 126.9780, radius: 0.15, count: 8 },
@@ -572,7 +893,7 @@ function generateRandomFireMarkers(fireIcon) {
         { name: '경기', lat: 37.4138, lon: 127.5183, radius: 0.20, count: 5 },
         { name: '강원', lat: 37.8228, lon: 128.1555, radius: 0.15, count: 3 },
         { name: '충북', lat: 36.6357, lon: 127.4914, radius: 0.12, count: 2 },
-        { name: '충남', lat: 36.5184, lon: 126.8000, radius: 0.12, count: 2 },
+        { name: '충남', lat: 36.8188281, lon: 127.1518748 , radius: 0.12, count: 30 },
         { name: '전북', lat: 35.7175, lon: 127.1530, radius: 0.10, count: 2 },
         { name: '전남', lat: 34.8679, lon: 126.9910, radius: 0.12, count: 2 },
         { name: '경북', lat: 36.4919, lon: 128.8889, radius: 0.15, count: 3 },
@@ -637,7 +958,11 @@ function generateRandomFireMarkers(fireIcon) {
                     return;
                 }
                 
-                // 다른 마커 클릭 시
+                // 다른 마커 클릭 시 - 기존 이벤트 마커와 연결선 정리
+                clearConnectionLines();
+                clearEventMarkers();
+                hideMarkerPopupButton();
+                
                 lastClickedMarker = locationName;
                 clickedMarkers.add(locationName);
                 
@@ -656,6 +981,9 @@ function generateRandomFireMarkers(fireIcon) {
                 };
                 
                 console.log('🔥 화재 마커 선택됨:', currentFireLocation);
+                
+                // 마커 옆에 AI 에이전트 버튼 표시
+                showMarkerPopupButton(lat, lon);
             });
             
             fireMarkers.push({ 
@@ -677,20 +1005,121 @@ function generateRandomFireMarkers(fireIcon) {
 // ============================================
 function markdownToHtml(text) {
     return text
-        // ### 제목 (h3)
-        .replace(/^### (.+)$/gm, '<h3 style="margin: 16px 0 8px 0; color: #1d1d1f; font-size: 18px;">$1</h3>')
-        // ## 제목 (h2)
-        .replace(/^## (.+)$/gm, '<h2 style="margin: 18px 0 10px 0; color: #1d1d1f; font-size: 20px;">$1</h2>')
-        // # 제목 (h1)
-        .replace(/^# (.+)$/gm, '<h1 style="margin: 20px 0 12px 0; color: #1d1d1f; font-size: 22px;">$1</h1>')
+        // ### 제목 - blue bold italic
+        .replace(/^### (.+)$/gm, '<strong style="color: blue; font-style: italic;">$1</strong>')
+        // ## 제목 - red bold
+        .replace(/^## (.+)$/gm, '<strong style="color: red;">$1</strong>')
         // **굵게**
         .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-        // *기울임*
-        .replace(/\*(.+?)\*/g, '<em>$1</em>')
-        // 숫자 목록
-        .replace(/^\d+\.\s+(.+)$/gm, '<div style="margin-left: 20px; margin-bottom: 6px;">• $1</div>')
-        // - 목록
-        .replace(/^-\s+(.+)$/gm, '<div style="margin-left: 20px; margin-bottom: 6px;">• $1</div>');
+        // m3u8 URL을 클릭 가능한 링크로
+        .replace(/(https?:\/\/[^\s<]+\.m3u8)/g, '<a href="#" onclick="showCctvPlayer(\'$1\', \'CCTV\'); return false;" style="color:#9c27b0;">📹 영상 보기</a>');
+}
+
+// ============================================
+// WebSocket 연결 관리
+// ============================================
+let agentWebSocket = null;
+let currentStreamingDiv = null;
+let wsResult = '';
+let eventParser = null;
+
+// Intent 상태 표시
+function showIntentStatus(intent, message) {
+    const el = document.getElementById('intentStatus');
+    el.textContent = `🎯 ${message}`;
+    el.className = `intent-status ${intent} visible`;
+}
+
+function hideIntentStatus() {
+    const el = document.getElementById('intentStatus');
+    el.classList.remove('visible');
+}
+
+async function connectWebSocket() {
+    if (agentWebSocket && agentWebSocket.readyState === WebSocket.OPEN) {
+        return agentWebSocket;
+    }
+    
+    try {
+        // Flask에서 pre-signed URL 받기
+        const response = await fetch('http://localhost:8082/ws-url', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: ENV.SESSION_ID })
+        });
+        const { url, error } = await response.json();
+        if (error) throw new Error(error);
+        
+        // Pre-signed URL로 직접 AgentCore에 연결
+        agentWebSocket = new WebSocket(url);
+        
+        agentWebSocket.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                
+                // Intent 상태 표시
+                if (data.intent) {
+                    showIntentStatus(data.intent, data.message);
+                    return;
+                }
+                
+                // data 필드에서 텍스트 추출
+                if (data.data && currentStreamingDiv) {
+                    wsResult += data.data;
+                    if (!eventParser) eventParser = new EventParser();
+                    eventParser.parse(data.data);
+                    
+                    const displayText = wsResult
+                        .replace(/\\n/g, '\n')
+                        .replace(/<event\s+type=\\?"[^"\\]+\\?"[^>]*>.*?<\/event>/gs, '')
+                        .replace(/\\+$/gm, '')
+                        .replace(/\n{3,}/g, '\n\n')
+                        .trim();
+                    currentStreamingDiv.innerHTML = markdownToHtml(displayText).replace(/\n/g, '<br>');
+                    
+                    const content = document.getElementById('infoContent');
+                    if (content) content.scrollTop = content.scrollHeight;
+                }
+                
+                // 완료 체크
+                if (data.stop || data.end_event_loop) {
+                    const spinners = document.querySelectorAll('.streaming-spinner');
+                    spinners.forEach(s => s.remove());
+                    hideIntentStatus();
+                }
+            } catch (e) {
+                // JSON 파싱 실패 시 무시
+            }
+        };
+        
+        agentWebSocket.onerror = (e) => console.error('WebSocket error:', e);
+        agentWebSocket.onclose = () => { agentWebSocket = null; };
+        
+        await new Promise((resolve, reject) => {
+            agentWebSocket.onopen = resolve;
+            setTimeout(() => reject(new Error('WebSocket timeout')), 5000);
+        });
+        
+        return agentWebSocket;
+    } catch (error) {
+        console.error('WebSocket connection failed:', error);
+        return null;
+    }
+}
+
+async function sendViaWebSocket(prompt) {
+    const ws = await connectWebSocket();
+    if (!ws) {
+        throw new Error('WebSocket 연결 실패');
+    }
+    
+    wsResult = '';
+    eventParser = new EventParser();
+    ws.send(JSON.stringify({
+        prompt: prompt,
+        actor_id: ENV.USER_ID,
+        session_id: ENV.SESSION_ID
+    }));
 }
 
 // ============================================
@@ -710,103 +1139,31 @@ async function sendChatMessage() {
     }
     
     const content = document.getElementById('infoContent');
-    if (!content) {
-        console.error('❌ infoContent element not found');
-        return;
-    }
+    if (!content) return;
     
-    // 기존 내용 유지하고 새 질문 추가
     const existingContent = content.innerHTML;
     content.innerHTML = existingContent + `
         <hr style="margin: 20px 0; border: none; border-top: 2px solid rgba(0,0,0,0.1);">
         <p><strong>질문:</strong> ${prompt}</p>
-        <div style="text-align: center; padding: 10px;">
+        <div class="streaming-response" style="font-size: 13px; line-height: 1.6; margin-top: 10px;"></div>
+        <div class="streaming-spinner" style="text-align: center; padding: 10px;">
             <div class="spinner"></div>
+            <div style="margin-top: 8px; font-size: 12px; color: #666;">응답 생성 중...</div>
         </div>
     `;
     
-    // 스크롤 최하단으로
+    const allStreamingDivs = content.querySelectorAll('.streaming-response');
+    currentStreamingDiv = allStreamingDivs[allStreamingDivs.length - 1];
     content.scrollTop = content.scrollHeight;
     
     try {
-        const response = await fetch(ENV.AGENT_API_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-                prompt: prompt,
-                actor_id: ENV.USER_ID,
-                session_id: ENV.SESSION_ID
-            })
-        });
-        
-        if (!response.ok) throw new Error('Network response was not ok');
-        
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder('utf-8');
-        const parser = new EventParser();
-        let result = '';
-        
-        // 로딩 제거하고 스트리밍 영역 추가
-        content.innerHTML = existingContent + `
-            <hr style="margin: 20px 0; border: none; border-top: 2px solid rgba(0,0,0,0.1);">
-            <p><strong>질문:</strong> ${prompt}</p>
-            <div class="streaming-response" style="font-size: 13px; line-height: 1.6; margin-top: 10px;"></div>
-            <div class="streaming-spinner" style="text-align: center; padding: 10px;">
-                <div class="spinner"></div>
-                <div style="margin-top: 8px; font-size: 12px; color: #666;">응답 생성 중...</div>
+        await sendViaWebSocket(prompt);
+    } catch (error) {
+        content.innerHTML += `
+            <div style="color: #d32f2f; padding: 10px; margin-top: 10px; border-radius: 8px; background: rgba(211, 47, 47, 0.1);">
+                <strong>⚠️ 에이전트 연결 실패</strong>
             </div>
         `;
-        
-        // 마지막에 추가된 요소들 찾기
-        const allStreamingDivs = content.querySelectorAll('.streaming-response');
-        const streamingDiv = allStreamingDivs[allStreamingDivs.length - 1];
-        const spinnerDiv = content.querySelector('.streaming-spinner:last-child');
-        
-        while (true) {
-            const { done, value } = await reader.read();
-            
-            if (done) {
-                // 스트리밍 완료 시 스피너 제거
-                if (spinnerDiv && spinnerDiv.parentNode) {
-                    spinnerDiv.remove();
-                }
-                break;
-            }
-            
-            const chunk = decoder.decode(value, { stream: true });
-            result += chunk;
-            
-            // 이벤트 파싱 (원본 chunk 사용)
-            parser.parse(chunk);
-            
-            // UI 업데이트 (이벤트 태그 제거 후 줄바꿈 처리)
-            const displayText = result
-                .replace(/\\n/g, '\n')  // \\n을 실제 줄바꿈으로 변환
-                .replace(/<event\s+type=\\?"[^"\\]+\\?"[^>]*>.*?<\/event>/gs, '')  // 이벤트 태그 제거
-                .replace(/\[antml:function_calls\][\s\S]*?\[\/antml:function_calls\]/g, '')  // tool 호출 태그 제거
-                .replace(/([^\n])(\[[^\]]+\])/g, '$1\n$2')  // 모든 [텍스트] 앞에 줄바꿈
-                .replace(/(\[[^\]]+\])\n+/g, '$1\n')  // [텍스트] 뒤의 여러 줄바꿈을 하나로
-                .replace(/\\+$/gm, '')  // 줄 끝의 백슬래시 제거
-                .replace(/\\\s*$/g, '');  // 문장 끝의 백슬래시와 공백 제거
-            
-            if (streamingDiv) {
-                streamingDiv.innerHTML = markdownToHtml(displayText).replace(/\n/g, '<br>');
-            }
-            
-            // 자동 스크롤 (최신 내용으로)
-            if (content) {
-                content.scrollTop = content.scrollHeight;
-            }
-        }
-        
-    } catch (error) {
-        if (content) {
-            content.innerHTML += `
-                <div style="color: #d32f2f; padding: 10px; margin-top: 10px; border-radius: 8px; background: rgba(211, 47, 47, 0.1);">
-                    <strong>⚠️ 에이전트 연결 실패</strong>
-                </div>
-            `;
-        }
         console.error('Agent call error:', error);
     }
 }
@@ -815,12 +1172,18 @@ async function sendChatMessage() {
 // 에이전트 호출 (수동 - 버튼 클릭)
 // ============================================
 async function callAgentManual() {
-    if (!currentFireLocation) {
-        alert('먼저 화재 마커를 클릭해주세요.');
-        return;
+    if (currentFireLocation) {
+        callAgent(currentFireLocation.lat, currentFireLocation.lon, currentFireLocation.address);
+    } else {
+        openAnalyzePanel();
     }
-    
-    callAgent(currentFireLocation.lat, currentFireLocation.lon, currentFireLocation.address);
+}
+
+function openAnalyzePanel() {
+    const infoPanel = document.getElementById('infoPanel');
+    infoPanel.classList.add('active');
+    document.getElementById('infoContent').innerHTML = '<p style="color:#666;">질문을 입력하세요.</p>';
+    document.getElementById('chatInput').focus();
 }
 
 // ============================================
@@ -829,92 +1192,38 @@ async function callAgentManual() {
 async function callAgent(lat, lon, address) {
     const infoPanel = document.getElementById('infoPanel');
     
-    // 패널이 이미 열려있으면 닫지 않고 계속 진행
     if (!infoPanel.classList.contains('active')) {
         infoPanel.classList.add('active');
     }
     
     const content = document.getElementById('infoContent');
     
-    // 로딩 표시
-    content.innerHTML = `
-        <div style="text-align: center; padding: 20px;">
+    // 기존 내용에 추가 (초기화하지 않음)
+    const existingContent = content.innerHTML;
+    const separator = existingContent && !existingContent.includes('화재 마커를 클릭') ? '<hr style="margin: 20px 0; border: none; border-top: 2px solid rgba(0,0,0,0.1);">' : '';
+    
+    content.innerHTML = (existingContent.includes('화재 마커를 클릭') ? '' : existingContent) + separator + `
+        <div class="streaming-response" style="font-size: 13px; line-height: 1.6;"></div>
+        <div class="streaming-spinner" style="text-align: center; padding: 10px;">
             <div class="spinner"></div>
-            <div style="margin-top: 12px;">AI 에이전트 분석 중...</div>
+            <div style="margin-top: 8px; font-size: 12px; color: #666;">AI 에이전트 분석 중...</div>
         </div>
     `;
     
-    // 프롬프트 생성 (위도/경도 포함)
-    const prompt = `화재 발생 지점: ${address}\n위도: ${lat}, 경도: ${lon}\n\n화재가 발생했다!!!!!`;
+    const allStreamingDivs = content.querySelectorAll('.streaming-response');
+    currentStreamingDiv = allStreamingDivs[allStreamingDivs.length - 1];
+    content.scrollTop = content.scrollHeight;
     
-    const requestPayload = { 
-        prompt: prompt,
-        actor_id: ENV.USER_ID,
-        session_id: ENV.SESSION_ID
-    };
+    const prompt = `화재 발생 지점: ${address}\n위도: ${lat}, 경도: ${lon}\n\n화재 상황 발생이 발생 했습니다. 화재 진압 출동 관련하여 대응 방안을 찾아줘. `;
     
-    console.log('📤 [ANALYZE REQUEST]', requestPayload);
+    console.log('📤 [ANALYZE REQUEST]', prompt);
     
     try {
-        const response = await fetch(ENV.AGENT_API_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(requestPayload)
-        });
-        
-        if (!response.ok) throw new Error('Network response was not ok');
-        
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder('utf-8');
-        const parser = new EventParser();
-        let result = '';
-        
-        content.innerHTML = `
-            <div class="streaming-response" style="font-size: 13px; line-height: 1.6;"></div>
-            <div class="streaming-spinner" style="text-align: center; padding: 10px;">
-                <div class="spinner"></div>
-                <div style="margin-top: 8px; font-size: 12px; color: #666;">응답 생성 중...</div>
-            </div>
-        `;
-        
-        const streamingDiv = content.querySelector('.streaming-response');
-        const spinnerDiv = content.querySelector('.streaming-spinner');
-        
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) {
-                // 스트리밍 완료 시 스피너 제거
-                spinnerDiv.remove();
-                break;
-            }
-            
-            const chunk = decoder.decode(value, { stream: true });
-            result += chunk;
-            
-            // 이벤트 파싱 (원본 chunk 사용)
-            parser.parse(chunk);
-            
-            // UI 업데이트 (이벤트 태그 제거 후 줄바꿈 처리)
-            const displayText = result
-                .replace(/\\n/g, '\n')  // \\n을 실제 줄바꿈으로 변환
-                .replace(/<event\s+type=\\?"[^"\\]+\\?"[^>]*>.*?<\/event>/gs, '')  // 이벤트 태그 제거
-                .replace(/([^\n])(\[[^\]]+\])/g, '$1\n$2')  // 모든 [텍스트] 앞에 줄바꿈
-                .replace(/(\[[^\]]+\])\n+/g, '$1\n')  // [텍스트] 뒤의 여러 줄바꿈을 하나로
-                .replace(/\\+$/gm, '')  // 줄 끝의 백슬래시 제거
-                .replace(/\\\s*$/g, '');  // 문장 끝의 백슬래시와 공백 제거
-            streamingDiv.innerHTML = markdownToHtml(displayText).replace(/\n/g, '<br>');
-            
-            content.scrollTop = content.scrollHeight;
-        }
-        
+        await sendViaWebSocket(prompt);
     } catch (error) {
-        content.innerHTML = `
+        content.innerHTML += `
             <div style="color: #d32f2f; padding: 20px; text-align: center;">
                 <strong>⚠️ 에이전트 연결 실패</strong>
-                <p style="margin-top: 10px; font-size: 14px;">
-                    Flask 서버가 실행 중인지 확인하세요.<br>
-                    <code>python main.py</code>
-                </p>
             </div>
         `;
         console.error('Agent call error:', error);
