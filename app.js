@@ -1041,8 +1041,9 @@ async function connectWebSocket() {
     }
     
     try {
-        // Flask에서 pre-signed URL 받기
-        const response = await fetch('http://localhost:8082/ws-url', {
+        // Flask에서 pre-signed URL 받기 (AGENT_API_URL 기반으로 ws-url 엔드포인트 호출)
+        const wsUrlEndpoint = ENV.AGENT_API_URL;
+        const response = await fetch(wsUrlEndpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ session_id: ENV.SESSION_ID })
